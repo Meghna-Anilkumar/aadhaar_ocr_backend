@@ -30,6 +30,9 @@ app.use('/api', routes);
 
 // Error handling middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
+  if (res.headersSent) {
+    return next(err); // Skip if headers are already sent
+  }
   if (err instanceof Error) {
     res.status(500).json({ error: err.message || 'Internal Server Error' });
   } else {
