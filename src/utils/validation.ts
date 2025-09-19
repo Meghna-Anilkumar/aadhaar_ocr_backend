@@ -30,14 +30,12 @@ export const validateAadhaarImages = async (files: MulterFiles): Promise<void> =
     throw new CustomError('File size exceeds 5MB limit', 400);
   }
 
-  // Enhanced OCR validation to check if images actually contain Aadhaar content
-  // AND verify they are uploaded on the correct side
+
   try {
     console.log('[DEBUG] Performing OCR validation...');
     const frontValidation = await validateAadhaarContent(frontImage.path, 'front');
     const backValidation = await validateAadhaarContent(backImage.path, 'back');
     
-    // Check if images are swapped
     if (frontValidation.isValid && backValidation.isValid) {
       const frontActualSide = await detectAadhaarSide(frontImage.path);
       const backActualSide = await detectAadhaarSide(backImage.path);
@@ -59,6 +57,12 @@ export const validateAadhaarImages = async (files: MulterFiles): Promise<void> =
       if (frontActualSide === backActualSide && frontActualSide !== 'unknown') {
         throw new CustomError(`Both images appear to be the ${frontActualSide} side of Aadhaar card. Please upload one front and one back image`, 400);
       }
+
+
+      const sameCardValidation = await verifySameAadhaarCard(frontImage.path, backImage.path);
+      if (!sameCardValidation.isValid) {
+        throw new CustomError(`Images validation failed: ${sameCardValidation.reason}`, 400);
+      }
     }
     
     if (!frontValidation.isValid) {
@@ -75,7 +79,7 @@ export const validateAadhaarImages = async (files: MulterFiles): Promise<void> =
       throw error;
     }
     console.log('[DEBUG] OCR validation skipped due to error:', error);
-    // Continue without OCR validation in case of technical issues
+
   }
 
   console.log('[DEBUG] Validation passed for all checks');
@@ -86,7 +90,236 @@ interface ValidationResult {
   reason?: string;
 }
 
-// New function to detect which side of Aadhaar card an image represents
+
+async function verifySameAadhaarCard(frontImagePath: string, backImagePath: string): Promise<ValidationResult> {
+  try {
+    console.log('[DEBUG] Verifying both images belong to the same Aadhaar card...');
+    
+    const frontResult = await Tesseract.recognize(frontImagePath, 'eng', {
+      logger: () => {}, 
+    });
+    
+    const backResult = await Tesseract.recognize(backImagePath, 'eng', {
+      logger: () => {},
+    });
+    
+    const frontText = frontResult.data.text;
+    const backText = backResult.data.text;
+    
+    console.log('[DEBUG] Extracted texts for comparison');
+
+    const frontData = extractIdentifyingInfo(frontText);
+    const backData = extractIdentifyingInfo(backText);
+    
+    console.log('[DEBUG] Extracted identifying info:', { frontData, backData });
+    
+   
+    const verifications = [
+      verifyByAadhaarNumber(frontData, backData),
+      verifyByPersonalInfo(frontData, backData),
+      verifyByCommonElements(frontData, backData)
+    ];
+    
+    const successfulVerifications = verifications.filter(v => v.isValid);
+    const failedVerifications = verifications.filter(v => !v.isValid);
+    
+    console.log('[DEBUG] Verification results:', {
+      successful: successfulVerifications.length,
+      failed: failedVerifications.length,
+      details: verifications
+    });
+    
+
+    if (successfulVerifications.length >= 2 || 
+        verifications[0].isValid) { 
+      return { isValid: true };
+    }
+    
+
+    const explicitMismatches = failedVerifications.filter(v => 
+      v.reason && v.reason.includes('mismatch')
+    );
+    
+    if (explicitMismatches.length > 0) {
+      return { 
+        isValid: false, 
+        reason: `The uploaded images appear to belong to different Aadhaar cards. ${explicitMismatches[0].reason}` 
+      };
+    }
+    
+
+    console.log('[DEBUG] Insufficient data for verification, but no explicit mismatches found');
+    return { isValid: true };
+    
+  } catch (error) {
+    console.error('[DEBUG] Error verifying same Aadhaar card:', error);
+    return { isValid: true };
+  }
+}
+
+interface IdentifyingInfo {
+  aadhaarNumber?: string;
+  name?: string;
+  dob?: string;
+  gender?: string;
+  enrollmentId?: string;
+  pinCode?: string;
+}
+
+function extractIdentifyingInfo(text: string): IdentifyingInfo {
+  const info: IdentifyingInfo = {};
+  
+
+  const aadhaarMatch = text.match(/\b(\d{4})\s*(\d{4})\s*(\d{4})\b/);
+  if (aadhaarMatch) {
+    info.aadhaarNumber = aadhaarMatch[1] + aadhaarMatch[2] + aadhaarMatch[3];
+  }
+  
+
+  const enrollmentMatch = text.match(/\b(\d{4}\/\d{5}\/\d{5})\b|\b(\d{14})\b/);
+  if (enrollmentMatch) {
+    info.enrollmentId = enrollmentMatch[1] || enrollmentMatch[2];
+  }
+  
+
+  const genderMatch = text.match(/\b(MALE|FEMALE)\b/i);
+  if (genderMatch) {
+    info.gender = genderMatch[1].toLowerCase();
+  }
+  
+
+  const dobMatch = text.match(/\b(\d{2}[\/\-]\d{2}[\/\-]\d{4})\b/);
+  if (dobMatch) {
+    info.dob = dobMatch[1];
+  }
+  
+
+  const pinMatch = text.match(/\b(\d{6})\b/);
+  if (pinMatch && !info.aadhaarNumber?.includes(pinMatch[1])) {
+    info.pinCode = pinMatch[1];
+  }
+  
+
+  const lines = text.split('\n').map(line => line.trim());
+  for (const line of lines) {
+    if (line.length > 2 && line.length < 50 && 
+        /^[A-Z][a-z]+(\s+[A-Z][a-z]+)*$/.test(line) &&
+        !line.toLowerCase().includes('government') &&
+        !line.toLowerCase().includes('india') &&
+        !line.toLowerCase().includes('uidai') &&
+        !line.includes('DOB') &&
+        !line.includes('MALE') &&
+        !line.includes('FEMALE')) {
+      if (!info.name || line.length > info.name.length) {
+        info.name = line;
+      }
+    }
+  }
+  
+  return info;
+}
+
+function verifyByAadhaarNumber(frontData: IdentifyingInfo, backData: IdentifyingInfo): ValidationResult {
+  if (frontData.aadhaarNumber && backData.aadhaarNumber) {
+    if (frontData.aadhaarNumber === backData.aadhaarNumber) {
+      return { isValid: true };
+    } else {
+      return { 
+        isValid: false, 
+        reason: `Aadhaar numbers don't match: front (${frontData.aadhaarNumber}) vs back (${backData.aadhaarNumber})` 
+      };
+    }
+  }
+  
+
+  return { isValid: false, reason: 'Aadhaar number not clearly readable in both images' };
+}
+
+function verifyByPersonalInfo(frontData: IdentifyingInfo, backData: IdentifyingInfo): ValidationResult {
+  let matches = 0;
+  let mismatches = 0;
+  const reasons: string[] = [];
+  
+  // Check enrollment ID
+  if (frontData.enrollmentId && backData.enrollmentId) {
+    if (frontData.enrollmentId === backData.enrollmentId) {
+      matches++;
+    } else {
+      mismatches++;
+      reasons.push(`Enrollment IDs don't match`);
+    }
+  }
+  
+  // Check gender
+  if (frontData.gender && backData.gender) {
+    if (frontData.gender === backData.gender) {
+      matches++;
+    } else {
+      mismatches++;
+      reasons.push(`Gender information doesn't match`);
+    }
+  }
+  
+  // Check date of birth
+  if (frontData.dob && backData.dob) {
+    if (frontData.dob === backData.dob) {
+      matches++;
+    } else {
+      mismatches++;
+      reasons.push(`Date of birth doesn't match`);
+    }
+  }
+  
+  if (mismatches > 0) {
+    return { isValid: false, reason: reasons.join(', ') };
+  }
+  
+  if (matches >= 1) {
+    return { isValid: true };
+  }
+  
+  return { isValid: false, reason: 'Insufficient personal information to verify' };
+}
+
+function verifyByCommonElements(frontData: IdentifyingInfo, backData: IdentifyingInfo): ValidationResult {
+  let commonElements = 0;
+  
+  // Check for PIN code consistency
+  if (frontData.pinCode && backData.pinCode) {
+    if (frontData.pinCode === backData.pinCode) {
+      commonElements++;
+    } else {
+      return { isValid: false, reason: 'PIN codes don\'t match between front and back images' };
+    }
+  }
+  
+  // Check for name consistency (if extractable from both)
+  if (frontData.name && backData.name) {
+    // Simple name comparison (could be enhanced with fuzzy matching)
+    const frontNameWords = frontData.name.toLowerCase().split(' ');
+    const backNameWords = backData.name.toLowerCase().split(' ');
+    
+    const commonWords = frontNameWords.filter(word => 
+      backNameWords.some(backWord => 
+        backWord.includes(word) || word.includes(backWord)
+      )
+    );
+    
+    if (commonWords.length > 0) {
+      commonElements++;
+    } else {
+      return { isValid: false, reason: 'Names don\'t appear to match between images' };
+    }
+  }
+  
+  if (commonElements > 0) {
+    return { isValid: true };
+  }
+  
+  return { isValid: false, reason: 'No common identifying elements found' };
+}
+
+// Existing functions remain the same...
 async function detectAadhaarSide(imagePath: string): Promise<'front' | 'back' | 'unknown'> {
   try {
     console.log('[DEBUG] Detecting Aadhaar side for image...');
@@ -120,7 +353,6 @@ async function detectAadhaarSide(imagePath: string): Promise<'front' | 'back' | 
     let frontScore = 0;
     let backScore = 0;
     
-    // Calculate scores for front indicators
     for (const indicator of frontIndicators) {
       if (indicator.pattern.test(normalizedText)) {
         frontScore += indicator.weight;
@@ -128,7 +360,6 @@ async function detectAadhaarSide(imagePath: string): Promise<'front' | 'back' | 
       }
     }
     
-    // Calculate scores for back indicators
     for (const indicator of backIndicators) {
       if (indicator.pattern.test(normalizedText)) {
         backScore += indicator.weight;
@@ -137,14 +368,12 @@ async function detectAadhaarSide(imagePath: string): Promise<'front' | 'back' | 
     }
     
     console.log('[DEBUG] Side detection scores:', { frontScore, backScore });
-    
-    // Determine the side based on scores
+
     if (frontScore > backScore && frontScore >= 3) {
       return 'front';
     } else if (backScore > frontScore && backScore >= 3) {
       return 'back';
     } else if (frontScore === backScore && frontScore > 0) {
-      // If scores are equal, look for more specific indicators
       if (normalizedText.includes('help@uidai') || normalizedText.includes('www.uidai')) {
         return 'back';
       }
@@ -166,7 +395,7 @@ async function validateAadhaarContent(imagePath: string, expectedSide: 'front' |
     console.log(`[DEBUG] Validating ${expectedSide} image content...`);
     
     const { data: { text } } = await Tesseract.recognize(imagePath, 'eng', {
-      logger: () => {}, // Silent logging for validation
+      logger: () => {}, 
     });
     
     const normalizedText = text.toLowerCase();
@@ -242,23 +471,18 @@ async function validateAadhaarContent(imagePath: string, expectedSide: 'front' |
   }
 }
 
-// Additional utility function to check Aadhaar number validity
+
 export function isValidAadhaarNumber(aadhaarNumber: string): boolean {
-  // Remove any spaces or formatting
   const cleanNumber = aadhaarNumber.replace(/\s/g, '');
   
-  // Check if it's exactly 12 digits
   if (!/^\d{12}$/.test(cleanNumber)) {
     return false;
   }
   
-  // Aadhaar numbers starting with 0 or 1 are invalid
   if (cleanNumber.startsWith('0') || cleanNumber.startsWith('1')) {
     return false;
   }
   
-  // Simple checksum validation (basic implementation)
-  // Note: Full Aadhaar validation requires more complex algorithms
   const digits = cleanNumber.split('').map(Number);
   let sum = 0;
   
@@ -272,20 +496,18 @@ export function isValidAadhaarNumber(aadhaarNumber: string): boolean {
   return checksum === lastDigit;
 }
 
-// Utility to clean and format extracted text
 export function cleanExtractedText(text: string): string {
   return text
-    .replace(/[^\w\s\/.,-]/g, ' ') // Remove special characters except common ones
-    .replace(/\s+/g, ' ') // Replace multiple spaces with single space
+    .replace(/[^\w\s\/.,-]/g, ' ')
+    .replace(/\s+/g, ' ')
     .trim();
 }
 
-// Utility to validate date format
 export function isValidDate(dateString: string): boolean {
   const dateFormats = [
-    /^\d{2}\/\d{2}\/\d{4}$/, // DD/MM/YYYY
-    /^\d{2}-\d{2}-\d{4}$/, // DD-MM-YYYY
-    /^\d{2}\.\d{2}\.\d{4}$/, // DD.MM.YYYY
+    /^\d{2}\/\d{2}\/\d{4}$/,
+    /^\d{2}-\d{2}-\d{4}$/,
+    /^\d{2}\.\d{2}\.\d{4}$/,
   ];
   
   return dateFormats.some(format => format.test(dateString));

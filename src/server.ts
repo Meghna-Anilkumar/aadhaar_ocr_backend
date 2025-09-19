@@ -4,7 +4,6 @@ import app from './app';
 
 dotenv.config();
 
-// Create uploads directory if it doesn't exist
 if (!fs.existsSync('uploads')) {
   fs.mkdirSync('uploads');
 }
