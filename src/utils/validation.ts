@@ -4,35 +4,34 @@ import { AadhaarUploadField } from './enums';
 import Tesseract from 'tesseract.js';
 
 export const validateAadhaarImages = async (files: MulterFiles): Promise<void> => {
-  console.log('[DEBUG] Validating files:', files);
 
   if (!files || !files[AadhaarUploadField.FrontImage] || !files[AadhaarUploadField.BackImage]) {
-    console.log('[DEBUG] Validation failed: Missing required files');
+
     throw new CustomError('Both front and back images are required', 400);
   }
 
   const frontImage = files[AadhaarUploadField.FrontImage]![0];
   const backImage = files[AadhaarUploadField.BackImage]![0];
 
-  console.log('[DEBUG] Checking file types:', {
+  console.log('Checking file types:', {
     frontType: frontImage.mimetype,
     backType: backImage.mimetype,
   });
 
   if (!['image/jpeg', 'image/png'].includes(frontImage.mimetype) || 
       !['image/jpeg', 'image/png'].includes(backImage.mimetype)) {
-    console.log('[DEBUG] Validation failed: Invalid image types');
+    console.log('Validation failed: Invalid image types');
     throw new CustomError('Invalid image format. Use JPEG or PNG', 400);
   }
 
   if (frontImage.size > 5 * 1024 * 1024 || backImage.size > 5 * 1024 * 1024) {
-    console.log('[DEBUG] Validation failed: File size exceeds 5MB');
+    console.log('Validation failed: File size exceeds 5MB');
     throw new CustomError('File size exceeds 5MB limit', 400);
   }
 
 
   try {
-    console.log('[DEBUG] Performing OCR validation...');
+    console.log('Performing OCR validation...');
     const frontValidation = await validateAadhaarContent(frontImage.path, 'front');
     const backValidation = await validateAadhaarContent(backImage.path, 'back');
     
@@ -40,7 +39,7 @@ export const validateAadhaarImages = async (files: MulterFiles): Promise<void> =
       const frontActualSide = await detectAadhaarSide(frontImage.path);
       const backActualSide = await detectAadhaarSide(backImage.path);
       
-      console.log('[DEBUG] Detected sides:', { frontActualSide, backActualSide });
+      console.log('Detected sides:', { frontActualSide, backActualSide });
       
       if (frontActualSide === 'back' && backActualSide === 'front') {
         throw new CustomError('Images are uploaded in wrong order. Please upload the front image in the front slot and back image in the back slot', 400);
@@ -73,16 +72,16 @@ export const validateAadhaarImages = async (files: MulterFiles): Promise<void> =
       throw new CustomError(`Back image validation failed: ${backValidation.reason}`, 400);
     }
     
-    console.log('[DEBUG] OCR validation passed for both images');
+    console.log('OCR validation passed for both images');
   } catch (error) {
     if (error instanceof CustomError) {
       throw error;
     }
-    console.log('[DEBUG] OCR validation skipped due to error:', error);
+    console.log('OCR validation skipped due to error:', error);
 
   }
 
-  console.log('[DEBUG] Validation passed for all checks');
+  console.log('Validation passed for all checks');
 };
 
 interface ValidationResult {
@@ -93,7 +92,7 @@ interface ValidationResult {
 
 async function verifySameAadhaarCard(frontImagePath: string, backImagePath: string): Promise<ValidationResult> {
   try {
-    console.log('[DEBUG] Verifying both images belong to the same Aadhaar card...');
+    console.log('Verifying both images belong to the same Aadhaar card...');
     
     const frontResult = await Tesseract.recognize(frontImagePath, 'eng', {
       logger: () => {}, 
@@ -106,12 +105,12 @@ async function verifySameAadhaarCard(frontImagePath: string, backImagePath: stri
     const frontText = frontResult.data.text;
     const backText = backResult.data.text;
     
-    console.log('[DEBUG] Extracted texts for comparison');
+    console.log('Extracted texts for comparison');
 
     const frontData = extractIdentifyingInfo(frontText);
     const backData = extractIdentifyingInfo(backText);
     
-    console.log('[DEBUG] Extracted identifying info:', { frontData, backData });
+    console.log('Extracted identifying info:', { frontData, backData });
     
    
     const verifications = [
@@ -123,7 +122,7 @@ async function verifySameAadhaarCard(frontImagePath: string, backImagePath: stri
     const successfulVerifications = verifications.filter(v => v.isValid);
     const failedVerifications = verifications.filter(v => !v.isValid);
     
-    console.log('[DEBUG] Verification results:', {
+    console.log('Verification results:', {
       successful: successfulVerifications.length,
       failed: failedVerifications.length,
       details: verifications
@@ -148,11 +147,11 @@ async function verifySameAadhaarCard(frontImagePath: string, backImagePath: stri
     }
     
 
-    console.log('[DEBUG] Insufficient data for verification, but no explicit mismatches found');
+    console.log('Insufficient data for verification, but no explicit mismatches found');
     return { isValid: true };
     
   } catch (error) {
-    console.error('[DEBUG] Error verifying same Aadhaar card:', error);
+    console.error('Error verifying same Aadhaar card:', error);
     return { isValid: true };
   }
 }
@@ -240,7 +239,6 @@ function verifyByPersonalInfo(frontData: IdentifyingInfo, backData: IdentifyingI
   let mismatches = 0;
   const reasons: string[] = [];
   
-  // Check enrollment ID
   if (frontData.enrollmentId && backData.enrollmentId) {
     if (frontData.enrollmentId === backData.enrollmentId) {
       matches++;
@@ -250,7 +248,7 @@ function verifyByPersonalInfo(frontData: IdentifyingInfo, backData: IdentifyingI
     }
   }
   
-  // Check gender
+
   if (frontData.gender && backData.gender) {
     if (frontData.gender === backData.gender) {
       matches++;
@@ -260,7 +258,7 @@ function verifyByPersonalInfo(frontData: IdentifyingInfo, backData: IdentifyingI
     }
   }
   
-  // Check date of birth
+
   if (frontData.dob && backData.dob) {
     if (frontData.dob === backData.dob) {
       matches++;
@@ -284,7 +282,7 @@ function verifyByPersonalInfo(frontData: IdentifyingInfo, backData: IdentifyingI
 function verifyByCommonElements(frontData: IdentifyingInfo, backData: IdentifyingInfo): ValidationResult {
   let commonElements = 0;
   
-  // Check for PIN code consistency
+
   if (frontData.pinCode && backData.pinCode) {
     if (frontData.pinCode === backData.pinCode) {
       commonElements++;
@@ -293,9 +291,8 @@ function verifyByCommonElements(frontData: IdentifyingInfo, backData: Identifyin
     }
   }
   
-  // Check for name consistency (if extractable from both)
+
   if (frontData.name && backData.name) {
-    // Simple name comparison (could be enhanced with fuzzy matching)
     const frontNameWords = frontData.name.toLowerCase().split(' ');
     const backNameWords = backData.name.toLowerCase().split(' ');
     
@@ -319,35 +316,32 @@ function verifyByCommonElements(frontData: IdentifyingInfo, backData: Identifyin
   return { isValid: false, reason: 'No common identifying elements found' };
 }
 
-// Existing functions remain the same...
 async function detectAadhaarSide(imagePath: string): Promise<'front' | 'back' | 'unknown'> {
   try {
-    console.log('[DEBUG] Detecting Aadhaar side for image...');
+    console.log('Detecting Aadhaar side for image...');
     
     const { data: { text } } = await Tesseract.recognize(imagePath, 'eng', {
-      logger: () => {}, // Silent logging
+      logger: () => {}, 
     });
     
     const normalizedText = text.toLowerCase();
-    
-    // Front side indicators (stronger indicators first)
+  
     const frontIndicators = [
-      { pattern: /\d{4}\s?\d{4}\s?\d{4}/, weight: 3 }, // Aadhaar number pattern
-      { pattern: /dob|date.*birth/i, weight: 2 }, // Date of birth
-      { pattern: /male|female/i, weight: 2 }, // Gender
-      { pattern: /d\/o|s\/o|w\/o/i, weight: 2 }, // Relation indicators
-      { pattern: /enrol.*no/i, weight: 1 }, // Enrollment number
+      { pattern: /\d{4}\s?\d{4}\s?\d{4}/, weight: 3 }, 
+      { pattern: /dob|date.*birth/i, weight: 2 }, 
+      { pattern: /male|female/i, weight: 2 }, 
+      { pattern: /d\/o|s\/o|w\/o/i, weight: 2 }, 
+      { pattern: /enrol.*no/i, weight: 1 }, 
     ];
     
-    // Back side indicators
     const backIndicators = [
-      { pattern: /address/i, weight: 3 }, // Address keyword
-      { pattern: /help@uidai|www\.uidai/i, weight: 3 }, // Contact information
-      { pattern: /valid throughout.*country/i, weight: 2 }, // Validity text
-      { pattern: /avail.*services/i, weight: 2 }, // Services text
-      { pattern: /mobile.*number.*email/i, weight: 2 }, // Update mobile/email text
-      { pattern: /carry.*smartphone/i, weight: 1 }, // Mobile app reference
-      { pattern: /pin.*code.*\d{6}/i, weight: 2 }, // PIN code in address
+      { pattern: /address/i, weight: 3 }, 
+      { pattern: /help@uidai|www\.uidai/i, weight: 3 }, 
+      { pattern: /valid throughout.*country/i, weight: 2 }, 
+      { pattern: /avail.*services/i, weight: 2 }, 
+      { pattern: /mobile.*number.*email/i, weight: 2 }, 
+      { pattern: /carry.*smartphone/i, weight: 1 }, 
+      { pattern: /pin.*code.*\d{6}/i, weight: 2 }, 
     ];
     
     let frontScore = 0;
@@ -356,18 +350,18 @@ async function detectAadhaarSide(imagePath: string): Promise<'front' | 'back' | 
     for (const indicator of frontIndicators) {
       if (indicator.pattern.test(normalizedText)) {
         frontScore += indicator.weight;
-        console.log('[DEBUG] Front indicator found:', indicator.pattern, 'weight:', indicator.weight);
+        console.log(' Front indicator found:', indicator.pattern, 'weight:', indicator.weight);
       }
     }
     
     for (const indicator of backIndicators) {
       if (indicator.pattern.test(normalizedText)) {
         backScore += indicator.weight;
-        console.log('[DEBUG] Back indicator found:', indicator.pattern, 'weight:', indicator.weight);
+        console.log(' Back indicator found:', indicator.pattern, 'weight:', indicator.weight);
       }
     }
     
-    console.log('[DEBUG] Side detection scores:', { frontScore, backScore });
+    console.log('Side detection scores:', { frontScore, backScore });
 
     if (frontScore > backScore && frontScore >= 3) {
       return 'front';
@@ -385,14 +379,14 @@ async function detectAadhaarSide(imagePath: string): Promise<'front' | 'back' | 
     return 'unknown';
     
   } catch (error) {
-    console.error('[DEBUG] Error detecting Aadhaar side:', error);
+    console.error('Error detecting Aadhaar side:', error);
     return 'unknown';
   }
 }
 
 async function validateAadhaarContent(imagePath: string, expectedSide: 'front' | 'back'): Promise<ValidationResult> {
   try {
-    console.log(`[DEBUG] Validating ${expectedSide} image content...`);
+    console.log(`Validating ${expectedSide} image content...`);
     
     const { data: { text } } = await Tesseract.recognize(imagePath, 'eng', {
       logger: () => {}, 
@@ -448,7 +442,7 @@ async function validateAadhaarContent(imagePath: string, expectedSide: 'front' |
                             normalizedText.includes('pin') ||
                             normalizedText.includes('state') ||
                             normalizedText.includes('district') ||
-                            /\d{6}/.test(text); // PIN code pattern
+                            /\d{6}/.test(text); 
       
       const hasContactInfo = normalizedText.includes('help') ||
                             normalizedText.includes('www') ||
@@ -466,7 +460,7 @@ async function validateAadhaarContent(imagePath: string, expectedSide: 'front' |
     }
     
   } catch (error) {
-    console.error(`[DEBUG] Error validating ${expectedSide} image:`, error);
+    console.error(`Error validating ${expectedSide} image:`, error);
     return { isValid: false, reason: 'Could not process image for validation' };
   }
 }

@@ -24,7 +24,7 @@ export const upload = multer({
     }
     cb(new CustomError('Invalid file type. Only JPEG or PNG allowed.', 400));
   },
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
+  limits: { fileSize: 5 * 1024 * 1024 },
 }).fields([
   { name: AadhaarUploadField.FrontImage, maxCount: 1 },
   { name: AadhaarUploadField.BackImage, maxCount: 1 },
