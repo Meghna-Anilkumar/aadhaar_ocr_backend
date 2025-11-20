@@ -13,6 +13,7 @@ import {
 } from '../utils/extraction';
 
 export class OcrService implements IOcrService {
+
   public async processAadhaarImages(frontImagePath: string, backImagePath: string): Promise<OcrResult> {
     try {
       console.log('Starting OCR for front image...');
@@ -25,7 +26,10 @@ export class OcrService implements IOcrService {
         logger: (m) => console.log('Back:', m),
       });
 
-      console.log('OCR results:', { frontText: frontResult.data.text, backText: backResult.data.text });
+      console.log('OCR results:', {
+        frontText: frontResult.data.text,
+        backText: backResult.data.text,
+      });
 
       const parsedData: OcrResult = {
         name: extractName(frontResult.data.text),
@@ -36,20 +40,29 @@ export class OcrService implements IOcrService {
 
       console.log('Parsed data:', parsedData);
 
-      this.cleanupFiles(frontImagePath, backImagePath);
+      this._cleanupFiles(frontImagePath, backImagePath);
 
       return parsedData;
+
     } catch (error) {
-      this.cleanupFiles(frontImagePath, backImagePath);
-      throw new CustomError(MESSAGES.OCR_PROCESSING_ERROR, HttpStatusCode.INTERNAL_SERVER_ERROR);
+      this._cleanupFiles(frontImagePath, backImagePath);
+      throw new CustomError(
+        MESSAGES.OCR_PROCESSING_ERROR, 
+        HttpStatusCode.INTERNAL_SERVER_ERROR
+      );
     }
   }
 
-  private cleanupFiles(frontImagePath: string, backImagePath: string): void {
+  private _cleanupFiles(frontImagePath: string, backImagePath: string): void {
     try {
       fs.unlinkSync(frontImagePath);
       fs.unlinkSync(backImagePath);
-      console.log('Successfully cleaned up files:', { frontImage: frontImagePath, backImage: backImagePath });
+
+      console.log('Successfully cleaned up files:', {
+        frontImage: frontImagePath,
+        backImage: backImagePath,
+      });
+
     } catch (cleanupError) {
       console.error('Error cleaning up files:', cleanupError);
     }
